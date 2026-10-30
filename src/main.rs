@@ -2,7 +2,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     env,
     fs::{self, File},
-    io,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::{exit, Command},
     thread::sleep,
@@ -12,7 +12,11 @@ use std::{
 const RUSTUP_URL: &str = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe";
 const VS_URL: &str = "https://aka.ms/vs/17/release/vs_BuildTools.exe";
 
-const MOVE_INSTEAD_OF_DELETE: bool = false;
+fn read_line() -> String {
+    let mut s = String::new();
+    io::stdin().read_line(&mut s).ok();
+    s.trim().to_string()
+}
 
 fn pause() {
     println!("\nPress Enter to close...");
@@ -48,8 +52,43 @@ fn dir_size(p: &Path) -> u64 {
     total
 }
 
+fn is_empty_dir(p: &Path) -> bool {
+    fs::read_dir(p).map(|mut r| r.next().is_none()).unwrap_or(false)
+}
+
 fn gb(bytes: u64) -> f64 {
     bytes as f64 / 1024.0 / 1024.0 / 1024.0
+}
+
+#[derive(PartialEq)]
+enum Action {
+    Move,
+    Delete,
+    Skip,
+}
+
+fn ask_action(link: &Path, real: &Path) -> Action {
+    println!("\n{} already exists, measuring size...", link.display());
+    let size = dir_size(link);
+    loop {
+        println!("{} is {:.2} GB.", link.display(), gb(size));
+        print!("[M]ove to {} (default) / [D]elete / [S]kip: ", real.display());
+        io::stdout().flush().ok();
+
+        match read_line().to_uppercase().as_str() {
+            "" | "M" => return Action::Move,
+            "S" => return Action::Skip,
+            "D" => {
+                print!("Permanently delete {}? Type YES to confirm: ", link.display());
+                io::stdout().flush().ok();
+                if read_line() == "YES" {
+                    return Action::Delete;
+                }
+                println!("Not confirmed.");
+            }
+            _ => println!("Enter M, D or S."),
+        }
+    }
 }
 
 fn junction(link: &Path, real: &Path) {
@@ -62,27 +101,39 @@ fn junction(link: &Path, real: &Path) {
             return;
         }
 
-        if MOVE_INSTEAD_OF_DELETE {
-            println!("[>] moving {} -> {}", link.display(), real.display());
-            let st = Command::new("robocopy")
-                .arg(link)
-                .arg(real)
-                .args(["/E", "/MOVE", "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NP"])
-                .status()
-                .unwrap_or_else(|_| fail("Failed to run robocopy"));
-            if st.code().map(|c| c >= 8).unwrap_or(true) {
-                fail(&format!("[!] robocopy failed on {}", link.display()));
+        if is_empty_dir(link) {
+            fs::remove_dir(link)
+                .unwrap_or_else(|e| fail(&format!("[!] Failed to remove {}: {}", link.display(), e)));
+        } else {
+            match ask_action(link, real) {
+                Action::Skip => {
+                    println!("[~] skipped {} (it will stay on C:)", link.display());
+                    return;
+                }
+                Action::Move => {
+                    println!("[>] moving {} -> {}", link.display(), real.display());
+                    let st = Command::new("robocopy")
+                        .arg(link)
+                        .arg(real)
+                        .args(["/E", "/MOVE", "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NP"])
+                        .status()
+                        .unwrap_or_else(|_| fail("Failed to run robocopy"));
+                    if st.code().map(|c| c >= 8).unwrap_or(true) {
+                        fail(&format!("[!] robocopy failed on {}", link.display()));
+                    }
+                }
+                Action::Delete => {}
             }
-        }
 
-        if link.exists() {
-            println!("[x] deleting {}", link.display());
-            if let Err(e) = fs::remove_dir_all(link) {
-                fail(&format!(
-                    "[!] Failed to delete {}: {}\n    (close programs that use it and try again)",
-                    link.display(),
-                    e
-                ));
+            if link.exists() {
+                println!("[x] removing {}", link.display());
+                if let Err(e) = fs::remove_dir_all(link) {
+                    fail(&format!(
+                        "[!] Failed to remove {}: {}\n    (close programs that use it and try again)",
+                        link.display(),
+                        e
+                    ));
+                }
             }
         }
     }
@@ -176,9 +227,8 @@ fn install_vs(setup: &Path, args: &[String], tmp: Option<&Path>, watch: &Path) -
 fn ask_drive() -> char {
     loop {
         println!("Where to install? Enter a drive letter (C = regular install, Enter = C): ");
-        let mut s = String::new();
-        io::stdin().read_line(&mut s).ok();
-        let s = s.trim().trim_end_matches([':', '\\']).to_uppercase();
+        let s = read_line();
+        let s = s.trim_end_matches([':', '\\']).to_uppercase();
 
         let letter = if s.is_empty() { 'C' } else { s.chars().next().unwrap() };
         if !letter.is_ascii_alphabetic() || s.chars().count() > 1 {
