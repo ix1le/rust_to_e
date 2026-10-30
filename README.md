@@ -5,8 +5,10 @@ it installs Rust (MSVC toolchain) + Build Tools on whatever drive you pick. Wind
 ## how it works
 
 you type a drive letter. Enter = C, and then it's just a normal install
-Any other letter, and it makes junctions (`mklink /J`) from the usual places on C: to folders on that drive, so Windows and the installers think everything is still on C:. Stuff like `.cargo`, `.rustup`, `Windows Kits`, `Package Cache` and so on. Then it downloads and installs Build Tools and rustup.
-If one of those folders already exists on C: and isn't empty, it asks what to do: move it to the other drive (default), delete it (you have to type YES), or skip it
+
+any other letter, and it makes junctions (`mklink /J`) from the usual places on C: to folders on that drive, so Windows and the installers think everything is still on C:. Stuff like `.cargo`, `.rustup`, `Windows Kits`, `Package Cache` and so on. Then it downloads and installs Build Tools and rustup.
+
+if one of those folders already exists on C: and isn't empty, it asks what to do: move it to the other drive (default), delete it (you have to type YES), or skip it
 
 ## usage
 
